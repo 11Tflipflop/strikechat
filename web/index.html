@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>strikechat</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: Arial, Helvetica, sans-serif;
+    background: #eef2ff;
+    color: #000;
+    display: flex;
+    flex-direction: column;
+  }
+  #top {
+    background: #d6daf0;
+    padding: 8px 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+  }
+  #room { font-weight: bold; color: #800000; }
+  #status { font-size: 12px; }
+  #msgs { flex: 1; overflow-y: auto; padding: 8px 10px; }
+  .msg { background: #d6daf0; padding: 6px 8px; margin: 0 0 6px 0; word-wrap: break-word; }
+  .meta { font-size: 12px; margin-bottom: 2px; }
+  .name { color: #117743; font-weight: bold; }
+  .body { white-space: pre-wrap; }
+  .green { color: #789922; }
+  #bar { padding: 8px 10px; background: #d6daf0; }
+  #row { display: flex; gap: 6px; margin-top: 6px; }
+  input, textarea, button { font: inherit; padding: 6px; }
+  #name { width: 100%; }
+  #text { flex: 1; resize: none; height: 44px; }
+  #err { color: #dd0000; font-size: 12px; min-height: 16px; }
+</style>
+</head>
+<body>
+  <div id="top">
+    <span id="room">strikechat</span>
+    <span id="status">connecting...</span>
+  </div>
+  <div id="msgs"></div>
+  <div id="bar">
+    <input id="name" maxlength="20" placeholder="your name (optional)">
+    <div id="row">
+      <textarea id="text" maxlength="500" placeholder="write a message, Enter to send"></textarea>
+      <button id="send">Send</button>
+    </div>
+    <div id="err"></div>
+  </div>
+
+<script>
+  const key = new URLSearchParams(location.search).get('k') || '';
+  const q = '?k=' + encodeURIComponent(key);
+
+  const $ = (id) => document.getElementById(id);
+  const msgsEl = $('msgs'), statusEl = $('status'), errEl = $('err');
+  const nameEl = $('name'), textEl = $('text');
+
+  // remember the name on this phone/laptop
+  try { nameEl.value = localStorage.getItem('strikechat_name') || ''; } catch (e) {}
+  nameEl.addEventListener('input', () => {
+    try { localStorage.setItem('strikechat_name', nameEl.value); } catch (e) {}
+  });
+
+  let lastId = 0;
+
+  function addMessage(m) {
+    if (m.id <= lastId) return;          // already have it
+    lastId = m.id;
+
+    const box = document.createElement('div');
+    box.className = 'msg';
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = m.name;                       // textContent, so nobody can inject html
+    const time = new Date(m.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    meta.appendChild(name);
+    meta.appendChild(document.createTextNode('  ' + time));
+
+    const body = document.createElement('div');
+    body.className = 'body';
+    m.text.split('\n').forEach((line, i) => {
+      if (i > 0) body.appendChild(document.createTextNode('\n'));
+      if (line.startsWith('>')) {                    // >like this = greentext
+        const s = document.createElement('span');
+        s.className = 'green';
+        s.textContent = line;
+        body.appendChild(s);
+      } else {
+        body.appendChild(document.createTextNode(line));
+      }
+    });
+
+    box.appendChild(meta);
+    box.appendChild(body);
+
+    // only auto-scroll if the person is already at the bottom
+    const atBottom = msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight < 60;
+    msgsEl.appendChild(box);
+    while (msgsEl.children.length > 500) msgsEl.removeChild(msgsEl.firstChild);
+    if (atBottom) msgsEl.scrollTop = msgsEl.scrollHeight;
+  }
+
+  function connect() {
+    const es = new EventSource('/api/stream' + q);
+    es.onopen = () => { statusEl.textContent = 'connected'; };
+    es.onmessage = (e) => addMessage(JSON.parse(e.data));
+    es.onerror = () => {
+      if (es.readyState === EventSource.CLOSED) {
+        statusEl.textContent = 'cannot join (wrong link?)';
+      } else {
+        statusEl.textContent = 'reconnecting...';   // the browser retries by itself
+      }
+    };
+  }
+
+  async function loadInfo() {
+    try {
+      const r = await fetch('/api/info' + q);
+      if (!r.ok) return;
+      const info = await r.json();
+      $('room').textContent = info.room;
+      document.title = info.room;
+      if (statusEl.textContent === 'connected') statusEl.textContent = 'connected, online: ' + info.online;
+    } catch (e) {}
+  }
+
+  async function send() {
+    const text = textEl.value.trim();
+    if (!text) return;
+    errEl.textContent = '';
+    try {
+      const r = await fetch('/api/send' + q, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: nameEl.value, text: text })
+      });
+      if (r.status === 204) {
+        textEl.value = '';
+      } else if (r.status === 429) {
+        errEl.textContent = 'slow down a bit';
+      } else if (r.status === 400) {
+        errEl.textContent = 'message empty or too long (max 500)';
+      } else {
+        errEl.textContent = 'could not send (' + r.status + ')';
+      }
+    } catch (e) {
+      errEl.textContent = 'could not reach the server';
+    }
+  }
+
+  $('send').addEventListener('click', send);
+  textEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+
+  connect();
+  loadInfo();
+  setInterval(loadInfo, 15000);
+</script>
+</body>
+</html>
