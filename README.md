@@ -1,4 +1,4 @@
-# lanchat
+# strikechat
 
 A tiny chat server for when the internet is down but the college LAN still works.
 One person (the host) runs a single program, shares a link, and everyone on the same
@@ -32,9 +32,9 @@ Options:
 Build a single file you can copy to another laptop:
 
 ```
-go build -o lanchat .
-GOOS=windows GOARCH=amd64 go build -o lanchat.exe .
-GOOS=darwin GOARCH=arm64 go build -o lanchat-mac .
+go build -o strikechat .
+GOOS=windows GOARCH=amd64 go build -o strikechat.exe .
+GOOS=darwin GOARCH=arm64 go build -o strikechat-mac .
 ```
 
 Run the tests: `go test -race ./...`
